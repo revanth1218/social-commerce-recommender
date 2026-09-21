@@ -1,691 +1,916 @@
-Social Commerce Post Feed Recommendation Engine
+Social Commerce Recommendation Engine
 
-1. Project Overview
+A prototype recommendation engine for a social-commerce post feed.
 
-This project implements a personalized recommendation engine for a social commerce platform.
+The system combines pre-generated user/post embeddings with behavioral, social, popularity, and recency signals to rank relevant posts for a selected user.
 
-The main objective is to recommend relevant posts to users and rank them based on:
+1. Project Objective
 
-User-post semantic similarity
-
-User interaction signals
-
-Watch time
-
-Post popularity
-
-Content recency
-
-The system uses pre-generated user and post embeddings from MongoDB and combines them with behavioral and content signals to produce a personalized feed.
-
-The recommendation feed is dynamically re-ranked when the user interacts with recommended content.
-
-2. Problem Statement
-
-A social commerce platform may contain a large number of posts from different creators.
-
-Showing posts randomly does not provide a personalized experience.
-
-The recommendation engine should answer:
+The goal is to answer three questions:
 
 Which posts should be shown to a user?
 
-In what order should they be shown?
+In what order should those posts be shown?
 
-Which content signals should influence the ranking?
+Which user, content, behavioral, and social signals should influence the ranking?
 
-How should user interactions affect future recommendations?
+This project focuses on the Post Feed Recommendation Engine.
 
-How can the system work when direct user interaction history is limited?
+2. High-Level Architecture
 
-This project addresses these questions using an embedding-based hybrid recommendation approach.
-
-3. Solution Approach
-
-The system follows a hybrid recommendation approach.
-
-The main recommendation signal is the similarity between:
-
-User embedding
-
-Post embedding
-
-Additional ranking signals are then combined with the semantic similarity score.
-
-The current ranking formula is:
-
-Final Score =
-    Similarity × 0.55
-    + Engagement × 0.20
-    + Watch Time × 0.10
-    + Popularity × 0.10
-    + Recency × 0.05
-
-The weights are heuristic and can be tuned using offline evaluation or a trained ranking model in a production system.
-
-4. System Architecture
-
-                    MongoDB
-                       |
-          +------------+------------+
-          |            |            |
-      User Data     Post Data    Metrics
-          |            |            |
-      User          Post          Post
-    Embedding     Embedding     Metrics
-          |            |            |
-          +------------+------------+
-                       |
-                       v
-              Candidate Generation
-                       |
-                       v
-             Cosine Similarity
-                       |
-                       v
-              Ranking Features
-          +------------+------------+
-          |            |            |
-      Engagement    Watch Time   Popularity
-          |            |            |
-          +------------+------------+
-                       |
-                    Recency
-                       |
-                       v
-                Final Ranking
-                       |
-                       v
-              Personalized Feed
-                       |
-                       v
+                 MongoDB
+                    |
+        +-----------+-----------+
+        |                       |
+   User Data                 Post Data
+        |                       |
+ User Embedding          Post Embeddings
+        |                       |
+        +----------+------------+
+                   |
+            Candidate Posts
+                   |
+        +----------+-----------+
+        |                      |
+ Content Similarity      Ranking Signals
+ (Cosine Similarity)     - Engagement
+                         - Watch Time
+                         - Popularity
+                         - Recency
+                         - Follow
+                         - Creator Affinity
+                   |
+             Normalization
+                   |
+             Weighted Score
+                   |
+             Ranked Feed
+                   |
              User Interaction
-          +------------+------------+
-          |            |            |
-        Like         Save        Watch
-          |            |            |
-          +------------+------------+
-                       |
-                       v
-             Local User Embedding
-                       |
-                       v
-                  Re-ranking
-                       |
-                       v
-              Next Recommendation
+          /        |        \
+       Like      Save      Follow
+          \        |        /
+           Local State Update
+                   |
+          User Embedding Update
+                   |
+            Re-ranking
 
-5. Technologies Used
+3. Technology Stack
 
 Python
 
-MongoDB
+MongoDB / MongoDB Atlas
 
 PyMongo
 
 NumPy
 
-scikit-learn
-
-Cosine Similarity
-
-MinMaxScaler
-
-JSON
+Scikit-learn
 
 python-dotenv
 
-6. MongoDB Collections Used
+Cosine Similarity
 
-userdetails
+JSON for local mutable state
 
-Used to retrieve available users and basic user information.
+4. MongoDB Collections Used
 
-Important fields:
+The project reads recommendation-related information from MongoDB.
 
-userId
+Main collections
 
-name
-
-userName
-
-email
-
-status
+users / user details collection
 
 userembeddings
 
-Contains the pre-generated user representation.
-
-Important field:
-
-embedding
-
-The current implementation uses the 512-dimensional user embedding.
-
 posts
-
-Contains the candidate posts.
-
-Important fields:
-
-postId
-
-userId
-
-caption
-
-status
-
-createdAt
-
-category
-
-content
-
-Only active posts are considered for recommendation.
 
 postembeddings
 
-Contains the semantic representation of posts.
-
-Important field:
-
-embedding_fused
-
-The current implementation uses the fused post embedding for similarity calculation.
+postengagements
 
 postmetrics
 
-Contains aggregated post-level engagement metrics.
-
-Used signals include:
-
-Likes
-
-Comments
-
-Shares
-
-Bookmarks
-
-Local JSON files
-
-Because the provided MongoDB environment is treated as read-only, user-specific interaction data and updated user embeddings are stored locally.
-
-Files:
-
-user_embedding.json
-
-local_interactions.json
-
-MongoDB is not modified by the recommendation engine.
-
-7. Recommendation Pipeline
-
-Step 1: Select User
-
-The system retrieves active users from the database and allows the user to select a user.
-
-Step 2: Load User Embedding
-
-The system first checks whether a locally updated embedding exists.
-
-If available, the local embedding is used.
-
-Otherwise, the original embedding is retrieved from MongoDB.
-
-This allows the system to preserve personalization across local sessions.
-
-Step 3: Fetch Active Posts
-
-Only posts with:
-
-status = active
-
-are considered.
-
-The selected user's own posts are excluded from the recommendation candidates.
-
-Step 4: Fetch Post Embeddings
-
-The system retrieves the corresponding post embeddings.
-
-Posts without a valid embedding are excluded.
-
-Step 5: Calculate Similarity
-
-Cosine similarity is calculated between the user embedding and each post embedding.
-
-User Embedding
-       |
-       | cosine similarity
-       v
-Post Embedding
-       |
-       v
-Similarity Score
-
-A higher similarity means the post is more aligned with the current user representation.
-
-Step 6: Calculate Additional Signals
-
-The system calculates:
-
-Engagement score
-
-Watch-time score
-
-Popularity score
-
-Recency score
-
-These signals are normalized before being combined.
-
-Step 7: Calculate Final Ranking Score
-
-The final score combines all signals:
-
-Final Score =
-    0.55 × Similarity
-  + 0.20 × Engagement
-  + 0.10 × Watch Time
-  + 0.10 × Popularity
-  + 0.05 × Recency
-
-Posts are sorted by the final score in descending order.
-
-Step 8: Display Recommendation
-
-The highest-ranked post is shown to the user.
-
-The system also displays a short explanation describing why the post was recommended.
-
-Example:
-
-Why recommended:
-  -> highly similar to your interests
-  -> influenced by your recent interaction
-  -> you spent time watching similar content
-
-8. User Interaction Handling
-
-The feed supports the following commands:
-
-Enter       -> Finish current video and go next
-l / like    -> Like current video
-s / save    -> Save current video
-b / both    -> Like + Save current video
-n / no      -> Stop feed
-
-Like
-
-A like is treated as a positive preference signal.
-
-Save
-
-A save/bookmark is treated as a strong positive preference signal.
-
-Like + Save
-
-Both signals are combined, producing a stronger influence on the local user embedding.
-
-Watch Time
-
-Watch time provides an implicit preference signal.
-
-Longer watch time indicates more engagement with the content.
-
-Very short watch time without a like or save is treated as a weak-interest signal.
-
-Skip
-
-When a user quickly moves to the next video without liking or saving it, the system does not move the user embedding toward that post.
-
-Therefore, a quick skip does not create a strong positive preference for that content.
-
-9. Online Personalization
-
-One important feature of the system is online personalization.
-
-After a meaningful interaction, the local user embedding is updated.
-
-The update follows:
-
-New User Embedding =
-    (1 - weight) × Old User Embedding
-    + weight × Post Embedding
-
-The resulting vector is normalized again.
-
-Interaction Weight
-
-The current implementation uses:
-
-Base weight = 0.05
-
-Watch time >= 10 seconds  -> +0.02
-Watch time >= 30 seconds  -> +0.05
-Like                     -> +0.10
-Save                     -> +0.10
-
-Maximum weight = 0.30
-
-This prevents a single interaction from completely changing the user's preference profile.
-
-10. Dynamic Re-ranking
-
-The feed is not static.
-
-Initial User Embedding
-        |
-        v
-Rank Posts
-        |
-        v
-Recommend Video 1
-        |
-        v
-User Likes + Saves
-        |
-        v
+views
+
+follows
+
+user_creator_affinity
+
+Other assignment collections such as products, carts, and orders are available in the database, but the current implementation does not use them for the post-feed ranking.
+
+MongoDB is kept READ-ONLY by this prototype. User interactions and updated embeddings are stored locally.
+
+5. Recommendation Pipeline
+
+The recommendation flow is:
+
+Select User
+    ↓
+Load User Embedding
+    ↓
+Fetch Active Posts
+    ↓
+Fetch Post Embeddings
+    ↓
+Calculate Cosine Similarity
+    ↓
+Calculate Ranking Signals
+    ↓
+Normalize Signals
+    ↓
+Apply Weighted Ranking Formula
+    ↓
+Sort Posts
+    ↓
+Display Recommendation
+    ↓
+Capture User Interaction
+    ↓
 Update Local User Embedding
-        |
-        v
-Recalculate Similarities
-        |
-        v
+    ↓
 Re-rank Remaining Posts
-        |
-        v
-Recommend Video 2
 
-This allows the recommendation feed to adapt during the current session.
-
-11. Why Embeddings Are Used
-
-Embeddings allow the system to compare content based on semantic similarity rather than relying only on exact keywords.
-
-For example, posts related to:
-
-bridal makeup
-wedding beauty
-bridal glam
-
-may have similar semantic representations even when their captions use different words.
-
-This makes embeddings useful as the primary content-relevance signal.
-
-12. Cold Start Handling
-
-A new user may have little or no direct interaction history.
-
-To handle this case, the system can start with the existing user embedding from MongoDB.
-
-The initial recommendations are therefore primarily driven by:
-
-User Embedding
-       +
-Post Embedding
-       +
-Popularity
-       +
-Recency
-
-As the user starts interacting with the feed, local behavioral signals become available and the user embedding is updated.
-
-13. Read-Only Database Design
-
-The MongoDB database is intentionally used in read-only mode.
-
-The system reads:
-
-Users
-
-User embeddings
-
-Posts
-
-Post embeddings
-
-Post metrics
-
-The system does not modify MongoDB.
-
-Instead, local files store:
-
-user_embedding.json
-local_interactions.json
-
-This allows the prototype to demonstrate online personalization without modifying the shared assignment database.
-
-14. Candidate Filtering
+6. Candidate Filtering
 
 Before ranking, the system filters candidates.
 
-A post is excluded if:
+A post is considered only when:
 
-The post is not active
+The post is active.
 
-The post belongs to the selected user
+The post has a valid embedding.
 
-The post has already been shown in the current session
+The post is not created by the selected user.
 
-A valid post embedding is unavailable
+The post has not already been shown in the current session.
 
-This reduces unnecessary ranking work and prevents repeated recommendations.
+This reduces unnecessary ranking work and prevents repeated posts during the same feed session.
 
-15. Example Recommendation Flow
+7. Content Similarity
 
-Example:
+The system uses pre-generated embeddings.
 
-Selected User:
-Krishna
+User embedding: 512 dimensions
 
-Initial Recommendation:
+Post embedding: 512 dimensions
 
-Post:
-A touch of bridal glam, a whole lot of elegance.
+Cosine similarity is used to measure how closely a user's embedding matches a post's embedding.
 
-Similarity:
-0.8776
+Conceptually:
 
-Final Score:
-0.8742
+User Embedding
+      +
+Post Embedding
+      ↓
+Cosine Similarity
+      ↓
+Content Relevance
 
-The user then performs:
+A higher similarity means the post is more aligned with the representation of the user's interests.
 
-Like + Save
+The embeddings are pre-generated in the provided data. This prototype does not train the embedding model.
 
-The local user embedding is updated.
+8. Ranking Signals
 
-The remaining candidates are then re-ranked.
+The final recommendation score combines multiple signals.
 
-This means the next recommendation can change based on the user's latest interaction.
+8.1 Content Similarity
 
-16. Recommendation Reasoning
+Measures semantic relevance between the user and post embeddings.
 
-The recommendation system can explain recommendations using its ranking signals.
+Weight: 45%
+
+similarity × 0.45
+
+8.2 Engagement
+
+The local interaction history considers:
+
+Like
+
+Bookmark / Save
+
+These interactions indicate stronger user interest than a simple view.
+
+Weight: 20%
+
+engagement × 0.20
+
+8.3 Watch Time
+
+Watch time represents how long the user spends viewing a post/video.
+
+The current watch-time score is:
+
+watch_score = min(watch_time / 30, 1)
 
 Examples:
 
-Highly similar to your interest profile.
+5 sec   → 0.167
+10 sec  → 0.333
+15 sec  → 0.500
+30 sec  → 1.000
+40 sec  → 1.000
 
-Matches your interests and was influenced by your recent interaction.
+Weight: 10%
 
-You spent more time watching similar content.
+watch_score × 0.10
 
-This makes the recommendation process easier to understand and debug.
+8.4 Popularity
 
-17. Scalability Considerations
+Popularity is calculated using post-level engagement metrics:
 
-The current prototype ranks the available candidate posts directly.
+popularity =
+    likes
+    + comments × 2
+    + shares × 3
+    + bookmarks × 2
 
-For a production-scale platform with millions of posts, calculating similarity against every post would be expensive.
+The weighted components reflect the prototype's heuristic assumption that different engagement types can have different strengths.
 
-A scalable architecture could use:
+Weight: 5%
+
+popularity × 0.05
+
+8.5 Recency
+
+Newer posts receive a higher recency score.
+
+The current prototype uses:
+
+recency = 1 / (1 + age_in_days)
+
+So, as a post becomes older, its recency contribution decreases.
+
+Weight: 5%
+
+recency × 0.05
+
+9. Social / Creator Signals
+
+The project uses social and creator-level signals.
+
+This is not a full graph-based recommendation system.
+
+9.1 Follow Signal — Implemented
+
+The system checks whether the selected user follows the creator of a post.
+
+Example:
+
+User
+ ↓
+follows
+ ↓
+Creator
+ ↓
+Creator's Post
+
+A post from a followed creator receives additional social relevance.
+
+The system reads follow relationships from MongoDB and also maintains newly created local follows.
+
+9.2 Creator Affinity — Implemented
+
+The system also uses the existing user_creator_affinity collection.
+
+Conceptually:
+
+User → Creator → Affinity Score
+
+This provides an additional creator-level relationship signal.
+
+The affinity value is bounded before being used in the ranking calculation.
+
+9.3 Social Signal Formula
+
+The current social signal combines:
+
+social_signal =
+    0.60 × follow_signal
+    + 0.40 × affinity_signal
+
+Social signal weight in final ranking: 15%
+
+social_signal × 0.15
+
+10. Final Ranking Formula
+
+The current final ranking formula is:
+
+final_score =
+    0.45 × similarity
+  + 0.20 × engagement
+  + 0.10 × watch_score
+  + 0.05 × popularity
+  + 0.05 × recency
+  + 0.15 × social_signal
+
+The weights are manually selected heuristic weights.
+
+They are not learned from a trained ranking model.
+
+11. Why a Heuristic Ranking Model?
+
+The assignment allows a hand-tuned heuristic ranking approach.
+
+For this prototype, a heuristic model was selected because:
+
+The available interaction data is relatively sparse.
+
+The approach is easy to understand and debug.
+
+Each signal's contribution is interpretable.
+
+It can be implemented quickly for a prototype.
+
+The ranking logic can later be replaced by a learned ranking model.
+
+For example:
+
+Content relevance → 45%
+User engagement   → 20%
+Watch behavior    → 10%
+Popularity        → 5%
+Recency           → 5%
+Social signals    → 15%
+
+With more historical interaction and impression data, these weights could be learned rather than manually selected.
+
+12. User Interaction
+
+The interactive feed supports:
+
+Enter → Continue
+l     → Like
+s     → Save / Bookmark
+b     → Like + Save
+f     → Follow creator
+n     → Stop
+
+The system records relevant interaction data locally.
+
+13. View and Watch-Time Tracking
+
+When a video/post starts, the system can count a view.
+
+Watch time is accumulated locally for the user-post interaction.
+
+For example:
+
+User watches:
+Post A → 5 sec
+Post A → another 8 sec
+
+Total watch time:
+Post A → 13 sec
+
+This interaction can influence the user's local representation and subsequent ranking.
+
+14. User Embedding Update
+
+The prototype supports an online-style local user embedding update.
+
+A base weight is assigned to the current user representation.
+
+Additional interaction signals can increase the weight of the interacted post embedding:
+
+Completion ≥ 80% → +0.10
+Completion ≥ 50% → +0.05
+Like             → +0.10
+Save             → +0.10
+Follow           → +0.10
+
+The interaction weight is capped at:
+
+0.30
+
+The updated representation is normalized before being saved locally.
+
+This allows the recommendation profile to change based on new interactions without modifying the MongoDB user embedding.
+
+15. Dynamic Re-ranking
+
+The feed is not ranked only once.
+
+After a user interacts with a post:
+
+User Interaction
+      ↓
+Local Interaction Update
+      ↓
+User Embedding Update
+      ↓
+Recalculate Similarity
+      ↓
+Re-rank Remaining Posts
+
+Therefore, later recommendations can change based on what the user has interacted with during the current session.
+
+16. Local Storage
+
+Because the MongoDB environment is treated as READ-ONLY, mutable recommendation state is stored locally.
+
+Local files
+
+user_embedding.json
+local_interactions.json
+local_follows.json
+
+Purpose
+
+user_embedding.json
+
+Stores the locally updated user embedding.
+
+local_interactions.json
+
+Stores local interaction information such as:
+
+Watch time
+
+Likes
+
+Saves
+
+Views
+
+local_follows.json
+
+Stores follow relationships created during the local recommendation session.
+
+These files should not be committed to GitHub.
+
+17. Cold-Start Handling
+
+Cold start is handled using the available user embedding and content similarity.
+
+If a user has little or no direct interaction history:
 
 User Embedding
-      |
-      v
-Approximate Nearest Neighbor Search
-      |
-      v
-Top Candidate Set
-      |
-      v
-Feature Generation
-      |
-      v
-Ranking Model
-      |
-      v
-Personalized Feed
+      ↓
+Compare with Post Embeddings
+      ↓
+Cosine Similarity
+      ↓
+Generate Initial Recommendations
 
-Possible production improvements include:
+As the user starts interacting with posts, local interaction signals and the updated embedding can make the feed more personalized.
 
-Vector database / vector index
+18. Recommendation Explanation
 
-Approximate nearest-neighbor retrieval
+For each recommendation, the system can provide a short reason.
+
+Possible reasons include:
+
+High content similarity
+
+Previous interaction with similar content
+
+Creator is followed
+
+Creator affinity exists
+
+Recent post
+
+Example:
+
+Why this post is recommended:
+High content similarity + followed creator + recent post
+
+This improves transparency during the prototype demonstration.
+
+19. Implemented Features
+
+Feature
+
+Status
+
+User selection
+
+Implemented
+
+Active post filtering
+
+Implemented
+
+Pre-generated embeddings
+
+Implemented
+
+Cosine similarity
+
+Implemented
+
+Like signal
+
+Implemented
+
+Save / Bookmark signal
+
+Implemented
+
+Watch-time signal
+
+Implemented
+
+View tracking
+
+Implemented
+
+Popularity signal
+
+Implemented
+
+Recency signal
+
+Implemented
+
+Follow signal
+
+Implemented
+
+Creator affinity
+
+Implemented
+
+Local user embedding update
+
+Implemented
+
+Dynamic re-ranking
+
+Implemented
+
+Recommendation explanation
+
+Implemented
+
+Local interaction storage
+
+Implemented
+
+Read-only MongoDB architecture
+
+Implemented
+
+Full trained ranking model
+
+Not implemented
+
+Collaborative filtering
+
+Not implemented
+
+Product recommendation
+
+Not implemented
+
+Hashtag/content-tag recommendation
+
+Not implemented
+
+Full graph-based recommendation
+
+Not implemented
+
+20. Future Improvements
+
+20.1 Learned Ranking Model
+
+With enough historical data, the manually selected weights can be replaced with a trained ranking model.
+
+Possible training data:
+
+User
+Post
+Impression
+Position
+Watch Time
+Like
+Save
+Share
+Follow
+Final Interaction
+
+A ranking model could learn which signals are most predictive of engagement.
+
+20.2 Creator Diversity
+
+The current system ranks posts independently.
+
+A future improvement is to avoid showing too many posts from the same creator.
+
+Example:
+
+Current:
+
+Creator A
+Creator A
+Creator A
+Creator B
+
+Future:
+
+Creator A
+Creator B
+Creator A
+Creator C
+
+This can make the feed more diverse.
+
+20.3 Advanced Social Graph Features
+
+The current implementation already uses:
+
+Follow relationship
+
+Creator affinity
+
+Future improvements could include:
+
+Friends-of-friends / second-degree connections
+
+More advanced social interaction signals
+
+Graph-based user and creator representations
+
+Graph embeddings
+
+20.4 Better Watch-Time Modeling
+
+The current watch-time score uses a simple 30-second cap.
+
+A future system could consider:
+
+Video duration
+
+Completion rate
+
+Re-watches
+
+Skip behavior
+
+Long-term viewing patterns
+
+The current ranking does not use completion rate as a ranking signal when reliable video duration is unavailable.
+
+20.5 Offline Evaluation
+
+Future evaluation can use historical impression and interaction data.
+
+Possible metrics:
+
+Precision@K
+Recall@K
+NDCG@K
+CTR
+Watch-time
+Save rate
+Like rate
+
+This would allow different ranking strategies to be compared using historical data.
+
+20.6 Scalable Candidate Retrieval
+
+For a large number of posts, comparing every user embedding against every post embedding would become expensive.
+
+A production system could use:
+
+Approximate Nearest Neighbor (ANN) search
+
+Vector databases
+
+Embedding indexes
 
 Candidate generation service
 
-Feature store
+This would reduce retrieval latency.
 
-Learning-to-rank model
+20.7 Real-Time Event Processing
 
-Recommendation cache
+Instead of local JSON state, a production system could process events using a streaming architecture.
 
-Batch embedding generation
+Example:
 
-Real-time interaction processing
+User Interaction
+      ↓
+Event Stream
+      ↓
+Feature Update
+      ↓
+User Profile Update
+      ↓
+Recommendation Service
 
-18. Limitations
+21. Current Limitations
 
-The current implementation is a prototype and has some limitations.
+This is a prototype, not a production recommendation platform.
 
-Heuristic Ranking
+Current limitations include:
 
-The ranking weights are manually selected.
+Manually selected ranking weights
 
-A production system could learn these weights using historical interaction data.
+Pre-generated embeddings
 
-Local Interaction Storage
+Sparse interaction data
 
-User interactions are stored locally because MongoDB is read-only in this prototype.
+Local JSON state for mutable interactions
 
-A production system would persist interaction events in a database or event-streaming system.
+No trained ranking model
 
-Sparse Behavioral Data
+No collaborative filtering
 
-The available test data contains limited user interaction history.
+No full graph-based recommendation
 
-This can reduce the reliability of behavior-based personalization.
+No ANN/vector index
 
-No Trained Ranking Model
+No real-time event streaming
 
-The current ranking layer is heuristic rather than a trained learning-to-rank model.
+No formal offline evaluation pipeline
 
-No Video Duration Metadata
+Product recommendation is not implemented
 
-The available post documents do not provide a reliable video duration field, so the current implementation uses raw watch time instead of a completion-rate feature.
+Hashtag/content-tag recommendation is not implemented
 
-19. Future Improvements
+22. Security
 
-Possible improvements include:
+Sensitive configuration such as the MongoDB connection string is stored in .env.
 
-Train a learning-to-rank model.
+Example:
 
-Add explicit negative/skip signals.
+MONGODB_URI=<your-mongodb-uri>
 
-Add creator diversity to avoid showing too many posts from the same creator.
+The .env file should be excluded from Git using .gitignore.
 
-Add hashtag/content-tag based candidate retrieval.
+Local user interaction and embedding files should also remain outside version control.
 
-Add collaborative filtering.
-
-Add social graph signals such as followed creators.
-
-Add product recommendation as a second recommendation pipeline.
-
-Add offline evaluation using Precision@K, Recall@K and NDCG@K.
-
-Add approximate nearest-neighbor vector search for large-scale retrieval.
-
-Store interaction events in a production database or event stream.
-
-Add recommendation caching for low-latency feed generation.
-
-20. How to Run
-
-1. Install dependencies
-
-pip install pymongo python-dotenv numpy scikit-learn
-
-2. Configure environment variables
-
-Create a .env file:
-
-MONGODB_URI=your_mongodb_connection_string
-
-Do not commit .env to GitHub.
-
-Add it to .gitignore:
-
-.env
-user_embedding.json
-local_interactions.json
-__pycache__/
-
-3. Run the recommendation engine
-
-python recN.py
-
-4. Select a user
-
-The program displays available users.
-
-Enter the required user number.
-
-5. Interact with the feed
-
-Enter -> Next
-l     -> Like
-s     -> Save
-b     -> Like + Save
-n     -> Stop
-
-21. Project Structure
+23. Project Structure
 
 social-commerce-recommender/
 │
-├── recN.py
+├── recommendation.py
+├── README.md
 ├── .env
 ├── .gitignore
+│
 ├── user_embedding.json
 ├── local_interactions.json
-└── README.md
+└── local_follows.json
 
-22. Conclusion
+Runtime JSON files should be ignored by Git.
 
-This project demonstrates an embedding-based hybrid recommendation engine for a social commerce post feed.
+24. Installation
 
-The system combines semantic similarity with behavioral and business signals to rank posts.
+Install the required Python packages:
 
-The main personalization mechanism is online local embedding adaptation:
+pip install pymongo python-dotenv numpy scikit-learn
 
-User Interaction
-       |
-       v
-Update Local User Embedding
-       |
-       v
-Recalculate Similarity
-       |
-       v
-Re-rank Remaining Posts
-       |
-       v
-Personalized Feed
+25. Environment Configuration
 
-The prototype provides a foundation that can be extended with a trained ranking model, scalable vector retrieval, richer behavioral signals, social signals, and product recommendations.
+Create a .env file:
+
+MONGODB_URI=<your-mongodb-uri>
+
+Do not commit the actual MongoDB URI to GitHub.
+
+26. Run the Project
+
+python recommendation.py
+
+The application:
+
+Connects to MongoDB.
+
+Loads active users.
+
+Allows the user to select a recommendation target.
+
+Loads the user's embedding.
+
+Retrieves active posts and embeddings.
+
+Calculates ranking scores.
+
+Displays recommended posts.
+
+Accepts user interactions.
+
+Updates local recommendation state.
+
+Re-ranks remaining posts.
+
+27. Example Recommendation Flow
+
+User selects Krishna
+        ↓
+Load Krishna's 512-D embedding
+        ↓
+Fetch active posts
+        ↓
+Compare user embedding with post embeddings
+        ↓
+Calculate:
+  - Similarity
+  - Engagement
+  - Watch time
+  - Popularity
+  - Recency
+  - Follow
+  - Creator affinity
+        ↓
+Normalize signals
+        ↓
+Calculate final score
+        ↓
+Sort by final score
+        ↓
+Show recommendation
+        ↓
+User likes / saves / watches / follows
+        ↓
+Update local state
+        ↓
+Update user representation
+        ↓
+Re-rank remaining posts
+
+28. Important Design Decision
+
+The current system intentionally separates:
+
+Candidate Retrieval
+
+Find potentially relevant posts
+
+from:
+
+Ranking
+
+Calculate final score
+and order the candidates
+
+This separation makes it easier to replace the current heuristic ranker with a trained ranking model later.
+
+29. Production Architecture — Future Direction
+
+A production version could look like:
+
+                  User Events
+                      ↓
+              Event Streaming
+                      ↓
+              Feature Store
+                      ↓
+       +--------------+--------------+
+       |                             |
+ User Profile Service        Post/Content Service
+       |                             |
+       +--------------+--------------+
+                      |
+              Candidate Retrieval
+                Vector / ANN
+                      |
+                 Ranker Model
+                      |
+              Business Rules
+                      |
+                Final Feed
+                      |
+                    User
+
+The current prototype represents the recommendation and ranking logic that could form part of this larger architecture.
+
+30. Summary
+
+This project implements a hybrid post-feed recommendation prototype using:
+
+Pre-generated user and post embeddings
+
+Cosine similarity
+
+User engagement
+
+Watch time
+
+Popularity
+
+Recency
+
+Follow relationships
+
+Creator affinity
+
+Local user embedding updates
+
+Dynamic re-ranking
+
+Cold-start handling
+
+Recommendation explanations
+
+The current ranking system is heuristic and interpretable, not a trained ML ranking model.
+
+With more data and production infrastructure, the system can be extended with learned ranking, creator diversity, advanced social graph features, offline evaluation, ANN retrieval, and real-time event processing.
