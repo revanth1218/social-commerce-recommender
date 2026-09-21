@@ -1,10 +1,6 @@
 .env
 user_embedding.json
 local_interactions.json
+local_follows.json
 __pycache__/
 *.pyc
-
-
-git add recommendation.py README.md
-git commit -m "Improve code comments and update documentation"
-git push origin main
