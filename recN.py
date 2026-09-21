@@ -1,41 +1,59 @@
+# os is used for reading environment variables and checking local files.
 import os
+# json lets us save and load the local user embedding and interaction history.
 import json
+# time is used to measure how long the user stays on a video.
 import time
+# NumPy is used for embedding calculations and numerical operations.
 import numpy as np
 
+# We use UTC timestamps so interaction times stay consistent.
 from datetime import datetime, timezone
+# python-dotenv loads the MongoDB connection string from the .env file.
 from dotenv import load_dotenv
+# PyMongo provides the connection between Python and MongoDB.
 from pymongo import MongoClient
+# Cosine similarity measures how closely the user and post embeddings match.
 from sklearn.metrics.pairwise import cosine_similarity
+# MinMaxScaler puts different ranking signals onto a comparable 0-to-1 scale.
 from sklearn.preprocessing import MinMaxScaler
 
 
+# Load values such as MONGODB_URI from the local .env file.
 load_dotenv()
 
+# Read the MongoDB URI without hard-coding the credential in the Python file.
 MONGODB_URI = os.getenv("MONGODB_URI")
 
 if not MONGODB_URI:
     raise ValueError("MONGODB_URI not found in .env file")
 
 
+# Create the MongoDB client using the URI from the environment.
 client = MongoClient(MONGODB_URI)
 
+# Ping MongoDB first so we know the connection is working.
 client.admin.command("ping")
 
 print("\nMongoDB connection successful!")
 print("MongoDB is used in READ-ONLY mode.\n")
 
+# Select the assignment database.
 db = client["test"]
 
 
+# This local file stores the user's updated embedding because MongoDB is read-only.
 USER_EMBEDDING_FILE = "user_embedding.json"
+# This local file stores likes, saves, watch time, and view information.
 LOCAL_INTERACTIONS_FILE = "local_interactions.json"
 
 
+# Return the current UTC time as an ISO string for interaction timestamps.
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
 
 
+# Safely convert a database value to a number so bad or missing data does not crash ranking.
 def safe_float(value, default=0.0):
     try:
         if value is None:
@@ -47,6 +65,7 @@ def safe_float(value, default=0.0):
         return default
 
 
+# Convert an embedding into a unit vector before comparing it with another embedding.
 def normalize_embedding(embedding):
     embedding = np.array(
         embedding,
@@ -61,6 +80,7 @@ def normalize_embedding(embedding):
     return embedding / norm
 
 
+# Save the locally updated user preference vector as JSON.
 def save_user_embedding(
     user_id,
     username,
@@ -87,6 +107,7 @@ def save_user_embedding(
         )
 
 
+# Try to restore the user's latest local embedding from the previous session.
 def load_local_user_embedding(user_id):
 
     if not os.path.exists(
@@ -124,6 +145,7 @@ def load_local_user_embedding(user_id):
         return None
 
 
+# Move the user embedding slightly toward content the user interacted with.
 def update_local_user_embedding(
     user_embedding,
     post_embedding,
@@ -136,24 +158,31 @@ def update_local_user_embedding(
         post_embedding
     )
 
+    # Start with a small update so one interaction does not completely change the profile.
     weight = 0.05
 
+    # Longer watch time is treated as stronger evidence of interest.
     if watch_time >= 30:
         weight += 0.05
+    # Ten or more seconds gives the interaction a smaller additional influence.
     elif watch_time >= 10:
         weight += 0.02
 
+    # A like is a clear positive preference signal.
     if liked:
         weight += 0.10
 
+    # A save/bookmark is also treated as a strong positive signal.
     if bookmarked:
         weight += 0.10
 
+    # Cap the update so one post cannot dominate the whole user profile.
     weight = min(
         weight,
         0.30
     )
 
+    # Blend the old user profile with the post the user interacted with.
     new_embedding = (
         (1 - weight) * user_embedding
         +
@@ -170,6 +199,7 @@ def update_local_user_embedding(
     )
 
 
+# Load previously recorded local interactions if the file already exists.
 def load_local_interactions():
 
     if not os.path.exists(
@@ -202,6 +232,7 @@ def load_local_interactions():
         return []
 
 
+# Save the latest local interaction history to disk.
 def save_local_interactions(
     interactions
 ):
@@ -219,6 +250,7 @@ def save_local_interactions(
         )
 
 
+# Find the existing interaction for one user and one post.
 def get_interaction(
     interactions,
     user_id,
@@ -238,6 +270,7 @@ def get_interaction(
     return None
 
 
+# Add new watch time or preference signals to an existing interaction record.
 def update_local_interaction(
     interactions,
     user_id,
@@ -255,6 +288,7 @@ def update_local_interaction(
         post_id
     )
 
+    # If this user has already interacted with the post, update that record instead of creating a duplicate.
     if existing:
 
         old_watch_time = safe_float(
@@ -292,6 +326,7 @@ def update_local_interaction(
             bookmarked
         )
 
+        # A view is counted only when the video actually starts.
         if increment_view:
 
             existing["views"] = (
@@ -315,6 +350,7 @@ def update_local_interaction(
 
         return existing
 
+    # Create the first local interaction record for this user-post pair.
     new_interaction = {
         "userId": user_id,
         "postId": post_id,
@@ -333,8 +369,10 @@ def update_local_interaction(
     return new_interaction
 
 
+# Calculate how old a post is so newer posts can receive a recency signal.
 def get_age_days(created_at):
 
+    # Missing creation time is treated as very old rather than making the ranking fail.
     if created_at is None:
         return 9999.0
 
@@ -400,6 +438,7 @@ def get_age_days(created_at):
         return 9999.0
 
 
+# Normalize a group of ranking values so different signals can be combined fairly.
 def normalize_values(values):
 
     values = np.array(
@@ -415,6 +454,7 @@ def normalize_values(values):
             len(values)
         )
 
+    # Convert this signal to a comparable range before combining it with other signals.
     scaler = MinMaxScaler()
 
     return scaler.fit_transform(
@@ -422,12 +462,14 @@ def normalize_values(values):
     ).flatten()
 
 
+# Build candidates, calculate every ranking signal, and return posts ordered by final score.
 def calculate_ranked_posts(
     current_user_embedding,
     excluded_post_ids,
     user_id
 ):
 
+    # Store the posts that are eligible to be ranked.
     candidates = []
 
     raw_popularity = []
@@ -435,6 +477,7 @@ def calculate_ranked_posts(
     raw_engagement = []
     raw_watch = []
 
+    # Check every active post and calculate its recommendation features.
     for post in posts:
 
         post_id = post.get(
@@ -448,12 +491,15 @@ def calculate_ranked_posts(
         if not post_id:
             continue
 
+        # Do not recommend the user's own post back to the same user.
         if creator_id == user_id:
             continue
 
+        # Do not show a post that has already appeared in this session.
         if post_id in excluded_post_ids:
             continue
 
+        # A post needs an embedding because semantic similarity is the main ranking signal.
         if post_id not in post_embeddings:
             continue
 
@@ -463,6 +509,7 @@ def calculate_ranked_posts(
             ]
         )
 
+        # Compare the user's interest vector with the post's semantic vector.
         similarity = float(
             cosine_similarity(
                 current_user_embedding.reshape(
@@ -511,6 +558,7 @@ def calculate_ranked_posts(
             )
         )
 
+        # Give more weight to stronger public engagement signals.
         popularity = (
             likes
             +
@@ -527,6 +575,7 @@ def calculate_ranked_posts(
             )
         )
 
+        # Newer posts get a higher recency value; the value decreases as the post gets older.
         recency = (
             1
             /
@@ -570,12 +619,14 @@ def calculate_ranked_posts(
                 )
             )
 
+        # Personal likes and saves are stronger signals than simply seeing a post.
         engagement_score = (
             liked * 3
             +
             bookmarked * 4
         )
 
+        # Convert watch time into a bounded score; 30 seconds or more reaches the maximum.
         watch_score = min(
             watch_time / 30,
             1
@@ -611,6 +662,7 @@ def calculate_ranked_posts(
     if not candidates:
         return []
 
+    # Normalize popularity before mixing it with similarity and other signals.
     popularity_norm = normalize_values(
         raw_popularity
     )
@@ -635,6 +687,7 @@ def calculate_ranked_posts(
             "similarity"
         ]
 
+        # Combine all ranking signals using the chosen heuristic weights.
         final_score = (
             similarity * 0.55
             +
@@ -651,6 +704,7 @@ def calculate_ranked_posts(
             "finalScore"
         ] = final_score
 
+    # Highest final score should appear first in the feed.
     candidates.sort(
         key=lambda x:
             x["finalScore"],
@@ -660,10 +714,12 @@ def calculate_ranked_posts(
     return candidates
 
 
+# Turn the main ranking signals into a simple human-readable explanation.
 def get_recommendation_reason(
     item
 ):
 
+    # Collect simple reasons that can be shown to the user.
     reasons = []
 
     similarity = item[
@@ -723,8 +779,10 @@ def get_recommendation_reason(
     )
 
 
+# First show the available users so the demo can be run for any selected user.
 print("Fetching users...\n")
 
+# Read the available users from MongoDB so the demo can be tested with different profiles.
 users = list(
     db["userdetails"].find(
         {},
@@ -780,6 +838,7 @@ for i, user in enumerate(
     )
 
 
+# Keep generating recommendations until the user stops or no candidates remain.
 while True:
 
     try:
@@ -811,6 +870,7 @@ while True:
         )
 
 
+# Get the user chosen from the menu.
 selected_user = users[
     selected_number - 1
 ]
@@ -832,6 +892,7 @@ email = selected_user.get(
 )
 
 
+# Separate sections of the terminal output for readability.
 print("\n")
 print("=" * 80)
 print("SELECTED USER")
@@ -858,6 +919,7 @@ print(
     "\nFetching user embedding..."
 )
 
+# Prefer the locally updated profile if this user has already interacted with content.
 local_embedding = (
     load_local_user_embedding(
         user_id
@@ -944,6 +1006,7 @@ print(
     "\nFetching active posts..."
 )
 
+# Fetch only active posts because deleted/inactive content should not enter the feed.
 posts = list(
     db["posts"].find(
         {
@@ -977,6 +1040,7 @@ print(
     "Fetching post embeddings..."
 )
 
+# Load the pre-generated fused post embeddings.
 post_embedding_documents = list(
     db["postembeddings"].find(
         {},
@@ -1016,6 +1080,7 @@ print(
     "Fetching post metrics..."
 )
 
+# Load aggregate engagement numbers used as the popularity feature.
 post_metric_documents = list(
     db["postmetrics"].find(
         {},
@@ -1070,8 +1135,10 @@ for document in post_metric_documents:
     }
 
 
+# Separate sections of the terminal output for readability.
 print("\n")
 print("=" * 80)
+# Start the interactive recommendation demo  . . . .  .
 print("PERSONALIZED VIDEO FEED")
 print("=" * 80)
 
@@ -1096,12 +1163,16 @@ Important:
 print("=" * 80)
 
 
+# Keep track of posts already shown so the same post is not repeated in this session.
 shown_post_ids = set()
+# Count how many recommendations have been displayed.
 video_number = 0
 
 
+# Keep generating recommendations until the user stops or no candidates remain.
 while True:
 
+    # Recalculate the feed so the latest user preference is reflected.
     ranked_posts = calculate_ranked_posts(
         user_embedding,
         shown_post_ids,
@@ -1116,6 +1187,7 @@ while True:
 
         break
 
+    # The first item is currently the highest-ranked recommendation.
     current_item = ranked_posts[0]
 
     current_post = (
@@ -1128,6 +1200,7 @@ while True:
         )
     )
 
+    # Mark this post as shown so it will not be recommended again in this session.
     shown_post_ids.add(
         current_post_id
     )
@@ -1140,6 +1213,7 @@ while True:
         ]
     )
 
+        # Combine all ranking signals using the chosen heuristic weights.
     final_score = (
         current_item[
             "finalScore"
@@ -1160,6 +1234,7 @@ while True:
     )
 
 
+    # Separate sections of the terminal output for readability.
     print("\n")
     print("=" * 80)
     print(
@@ -1264,9 +1339,11 @@ while True:
         "Timer started."
     )
 
+    # Start timing this watch segment.
     segment_start = time.time()
 
 
+    # Keep generating recommendations until the user stops or no candidates remain.
     while True:
 
         command = input(
@@ -1275,12 +1352,14 @@ while True:
 
         now = time.time()
 
+        # Measure how many seconds passed since the previous command.
         segment_watch_time = (
             now
             -
             segment_start
         )
 
+        # Add this segment to the total time spent on the current video.
         current_watch_time += (
             segment_watch_time
         )
@@ -1363,6 +1442,7 @@ while True:
                 "Views were NOT incremented."
             )
 
+    # Start timing this watch segment.
             segment_start = time.time()
 
             continue
@@ -1445,6 +1525,7 @@ while True:
                 "Views were NOT incremented."
             )
 
+    # Start timing this watch segment.
             segment_start = time.time()
 
             continue
@@ -1528,11 +1609,13 @@ while True:
                 "Views were NOT incremented."
             )
 
+    # Start timing this watch segment.
             segment_start = time.time()
 
             continue
 
 
+        # Pressing Enter finishes the current video and moves to the next recommendation.
         elif command == "":
 
             print(
@@ -1711,6 +1794,7 @@ while True:
             )
 
 
+# Separate sections of the terminal output for readability.
 print("\n")
 print("=" * 80)
 print("PERSONALIZED FEED COMPLETED")
